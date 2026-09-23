@@ -54,14 +54,31 @@ pub fn match_header_value_vectored(bytes: &mut Bytes) {
     }
 }
 
-#[inline]
+#[inline(always)]
 pub fn match_header_name_vectored(bytes: &mut Bytes) {
+    #[cfg(all(
+        feature = "std",
+        not(any(httparse_disable_simd, miri)),
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
+    let start = bytes.cursor();
     while let Some(block) = bytes.peek_n::<BLOCK_SIZE>() {
         let n = match_block(utils::is_header_name_token, block);
         // using peek_n to retrieve the bytes ensures that there are at least n more bytes
         // in `bytes`, so calling `advance(n)` is safe.
         bytes.advance(n);
         if n != BLOCK_SIZE {
+            return;
+        }
+        #[cfg(all(
+            feature = "std",
+            not(any(httparse_disable_simd, miri)),
+            any(target_arch = "x86", target_arch = "x86_64")
+        ))]
+        if bytes.cursor() - start == 32
+            && let Some(advance) = super::wide::match_header_name(bytes.as_ref())
+        {
+            bytes.advance(advance);
             return;
         }
     }

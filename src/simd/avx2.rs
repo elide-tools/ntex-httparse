@@ -3,6 +3,18 @@ use crate::iter::Bytes;
 #[inline]
 #[target_feature(enable = "avx2")]
 pub unsafe fn match_uri_vectored(bytes: &mut Bytes) {
+    #[cfg(feature = "std")]
+    if bytes.as_ref().len() >= 32 {
+        let advance = match_url_char_32_avx(bytes.as_ref());
+        bytes.advance(advance);
+        if advance != 32 {
+            return;
+        }
+        if let Some(advance) = super::wide::match_uri(bytes.as_ref()) {
+            bytes.advance(advance);
+            return;
+        }
+    }
     while bytes.as_ref().len() >= 32 {
         let advance = match_url_char_32_avx(bytes.as_ref());
 
@@ -77,8 +89,21 @@ unsafe fn match_url_char_32_avx(buf: &[u8]) -> usize {
     res.trailing_ones() as usize
 }
 
+#[inline]
 #[target_feature(enable = "avx2")]
 pub unsafe fn match_header_value_vectored(bytes: &mut Bytes) {
+    #[cfg(feature = "std")]
+    if bytes.as_ref().len() >= 32 {
+        let advance = match_header_value_char_32_avx(bytes.as_ref());
+        bytes.advance(advance);
+        if advance != 32 {
+            return;
+        }
+        if let Some(advance) = super::wide::match_header_value(bytes.as_ref()) {
+            bytes.advance(advance);
+            return;
+        }
+    }
     while bytes.as_ref().len() >= 32 {
         let advance = match_header_value_char_32_avx(bytes.as_ref());
         bytes.advance(advance);

@@ -36,10 +36,7 @@ mod sse42;
 
 #[cfg(all(
     not(any(httparse_disable_simd, miri)),
-    any(
-        target_feature = "avx2",
-        all(feature = "std", not(target_feature = "sse4.2"),)
-    ),
+    any(target_feature = "avx2", feature = "std"),
     any(target_arch = "x86", target_arch = "x86_64",),
 ))]
 mod avx2;
@@ -47,7 +44,7 @@ mod avx2;
 #[cfg(all(
     not(any(httparse_disable_simd, miri)),
     feature = "std",
-    not(any(target_feature = "sse4.2", target_feature = "avx2",)),
+    not(target_feature = "avx2"),
     any(target_arch = "x86", target_arch = "x86_64",),
 ))]
 mod runtime;
@@ -55,13 +52,14 @@ mod runtime;
 #[cfg(all(
     not(any(httparse_disable_simd, miri)),
     feature = "std",
-    not(any(target_feature = "sse4.2", target_feature = "avx2",)),
+    not(target_feature = "avx2"),
     any(target_arch = "x86", target_arch = "x86_64",),
 ))]
 pub use self::runtime::*;
 
 #[cfg(all(
     not(any(httparse_disable_simd, miri)),
+    not(feature = "std"),
     target_feature = "sse4.2",
     not(target_feature = "avx2"),
     any(target_arch = "x86", target_arch = "x86_64",),
@@ -85,6 +83,7 @@ mod sse42_compile_time {
 
 #[cfg(all(
     not(any(httparse_disable_simd, miri)),
+    not(feature = "std"),
     target_feature = "sse4.2",
     not(target_feature = "avx2"),
     any(target_arch = "x86", target_arch = "x86_64",),
@@ -133,3 +132,18 @@ mod neon;
     target_feature = "neon",
 ))]
 pub use self::neon::*;
+
+#[cfg(all(
+    not(any(httparse_disable_simd, miri)),
+    feature = "std",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
+mod avx512;
+#[cfg(all(test, not(any(httparse_disable_simd, miri))))]
+mod tests;
+#[cfg(all(
+    not(any(httparse_disable_simd, miri)),
+    feature = "std",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
+mod wide;
