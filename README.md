@@ -10,6 +10,15 @@ Fork of [httparse](https://crates.io/crates/httparse). Avoids allocations. No co
 
 Works with `no_std`, simply disable the `std` Cargo feature.
 
+This fork adds runtime AVX-512BW scanning for long URI/header values and AVX-512VBMI
+token classification for long header names. CPU and OS feature detection guards
+each target-specific entry point. Short fields retain the existing fast path;
+AVX2, SSE4.2, AArch64 NEON, and scalar fallbacks remain available. `no_std` uses
+the compile-time target features. Rust 1.89 or newer is required.
+
+`make test` checks byte classes, vector boundaries, and guarded-page tails on each
+available backend. `make bench` runs the optional scanner microbenchmark.
+
 [Changelog](./CHANGES.md)
 
 ## Usage
