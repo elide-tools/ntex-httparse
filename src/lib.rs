@@ -35,7 +35,7 @@
 //! SIMD optimizations are enabled automatically when available.
 //! If building an executable to be run on multiple platforms, and thus
 //! not passing `target_feature` or `target_cpu` flags to the compiler,
-//! runtime detection can still detect SSE4.2 or AVX2 support to provide
+//! runtime detection can still detect SSE4.2, AVX2, or AVX-512 support to provide
 //! massive wins.
 //!
 //! If compiling for a specific target, remembering to include

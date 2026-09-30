@@ -13,6 +13,8 @@ pub unsafe fn match_header_name_vectored(bytes: &mut Bytes) {
     let bitmap = _mm_loadu_si128(crate::utils::TOKEN_NIBBLES.as_ptr() as *const _);
     let bits = _mm_setr_epi8(1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128);
 
+    #[cfg(feature = "std")]
+    let mut escalate = true;
     while bytes.as_ref().len() >= 32 {
         let bitmap = _mm256_broadcastsi128_si256(bitmap);
         let bits = _mm256_broadcastsi128_si256(bits);
@@ -28,6 +30,13 @@ pub unsafe fn match_header_name_vectored(bytes: &mut Bytes) {
         bytes.advance(advance);
 
         if advance != 32 {
+            return;
+        }
+        #[cfg(feature = "std")]
+        if core::mem::take(&mut escalate)
+            && let Some(advance) = super::wide::match_header_name(bytes.as_ref())
+        {
+            bytes.advance(advance);
             return;
         }
     }
@@ -55,6 +64,18 @@ pub unsafe fn match_header_name_vectored(bytes: &mut Bytes) {
 #[inline]
 #[target_feature(enable = "avx2")]
 pub unsafe fn match_uri_vectored(bytes: &mut Bytes) {
+    #[cfg(feature = "std")]
+    if bytes.as_ref().len() >= 32 {
+        let advance = match_url_char_32_avx(bytes.as_ref());
+        bytes.advance(advance);
+        if advance != 32 {
+            return;
+        }
+        if let Some(advance) = super::wide::match_uri(bytes.as_ref()) {
+            bytes.advance(advance);
+            return;
+        }
+    }
     while bytes.as_ref().len() >= 32 {
         let advance = match_url_char_32_avx(bytes.as_ref());
 
@@ -129,8 +150,21 @@ unsafe fn match_url_char_32_avx(buf: &[u8]) -> usize {
     res.trailing_ones() as usize
 }
 
+#[inline]
 #[target_feature(enable = "avx2")]
 pub unsafe fn match_header_value_vectored(bytes: &mut Bytes) {
+    #[cfg(feature = "std")]
+    if bytes.as_ref().len() >= 32 {
+        let advance = match_header_value_char_32_avx(bytes.as_ref());
+        bytes.advance(advance);
+        if advance != 32 {
+            return;
+        }
+        if let Some(advance) = super::wide::match_header_value(bytes.as_ref()) {
+            bytes.advance(advance);
+            return;
+        }
+    }
     while bytes.as_ref().len() >= 32 {
         let advance = match_header_value_char_32_avx(bytes.as_ref());
         bytes.advance(advance);

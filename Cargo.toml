@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["http", "parser", "no_std"]
 categories = ["network-programming", "no-std", "parser-implementations", "web-programming"]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [features]
 default = ["std"]
@@ -18,6 +18,9 @@ std = []
 
 [dependencies]
 simdutf8 = "0.1.5"
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.3.5", features = ["html_reports"] }
