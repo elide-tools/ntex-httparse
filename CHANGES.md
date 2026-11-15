@@ -1,5 +1,14 @@
 # Changes
 
+## [2.4.2] - 2026-11-15
+
+* `parse_chunk_size` rejects chunk extensions that do not match the RFC 9112
+  section 7.1.1 grammar, such as a bare `;` or a non-token name
+
+* `parse_chunk_size` rejects whitespace before the CRLF of a chunk size line,
+  such as `5 \r\n`; whitespace is accepted only before `;` and around `=`
+  (RFC 9112 section 7.1)
+
 ## [2.4.1] - 2026-11-15
 
 * Parse a higher HTTP/1.x minor version, `HTTP/1.2` to `HTTP/1.9`, as HTTP/1.1

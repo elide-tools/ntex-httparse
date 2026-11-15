@@ -727,8 +727,17 @@ fn parse_code(bytes: &mut Bytes<'_, '_>) -> Result<u16> {
 /// A size of `0` is the last chunk.
 ///
 /// The size is 1 to 16 hex digits and the line must end with CRLF. Chunk
-/// extensions are skipped, control characters other than HTAB are rejected
-/// in them.
+/// extensions must follow the RFC 9112 section 7.1.1 grammar and are skipped:
+///
+/// ```notrust
+/// chunk-ext      = *( BWS ";" BWS chunk-ext-name
+///                     [ BWS "=" BWS chunk-ext-val ] )
+/// chunk-ext-name = token
+/// chunk-ext-val  = token / quoted-string
+/// ```
+///
+/// Whitespace is accepted only before `;` and around `=`, it may not
+/// precede the CRLF.
 ///
 /// # Example
 ///
@@ -742,69 +751,95 @@ pub fn parse_chunk_size(buf: &[u8]) -> result::Result<Status<(usize, u64)>, Inva
     let mut st = State::default();
     let mut bytes = Bytes::new(buf, &mut st);
     let mut size = 0;
-    let mut in_chunk_size = true;
-    let mut in_ext = false;
     let mut count = 0;
+    let mut line = ChunkLine::Size;
     loop {
         let b = next!(bytes);
-        match b {
-            b'0'..=b'9' if in_chunk_size => {
+        line = match (line, b) {
+            (ChunkLine::Size, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F') => {
                 if count > 15 {
                     return Err(InvalidChunkSize);
                 }
                 count += 1;
                 if cfg!(debug_assertions) && size > (u64::MAX / RADIX) {
-                    // actually unreachable!(), because count stops the loop at 15 digits before
-                    // we can reach u64::MAX / RADIX == 0xfffffffffffffff, which requires 15 hex
-                    // digits. This stops mirai reporting a false alarm regarding the `size *=
-                    // RADIX` multiplication below.
+                    // unreachable, 16 digits never overflow, this stops mirai
+                    // reporting a false alarm for the multiplication below
                     return Err(InvalidChunkSize);
                 }
-                size *= RADIX;
-                size += (b - b'0') as u64;
-            }
-            b'a'..=b'f' | b'A'..=b'F' if in_chunk_size => {
-                if count > 15 {
-                    return Err(InvalidChunkSize);
-                }
-                count += 1;
-                if cfg!(debug_assertions) && size > (u64::MAX / RADIX) {
-                    return Err(InvalidChunkSize);
-                }
-                size *= RADIX;
-                size += ((b | 0x20) + 10 - b'a') as u64;
+                let digit = if b <= b'9' {
+                    b - b'0'
+                } else {
+                    (b | 0x20) - b'a' + 10
+                };
+                size = size * RADIX + digit as u64;
+                ChunkLine::Size
             }
             // the chunk size must have at least one digit
-            b'\r' if count == 0 => return Err(InvalidChunkSize),
-            b'\r' => match next!(bytes) {
+            (ChunkLine::Size, _) if count == 0 => return Err(InvalidChunkSize),
+            (
+                ChunkLine::Size | ChunkLine::Name | ChunkLine::Token | ChunkLine::QuotedEnd,
+                b'\r',
+            ) => match next!(bytes) {
                 b'\n' => break,
                 _ => return Err(InvalidChunkSize),
             },
-            // If we weren't in the extension yet, the ";" signals its start
-            b';' if !in_ext => {
-                in_ext = true;
-                in_chunk_size = false;
+            (
+                ChunkLine::Size | ChunkLine::Ws | ChunkLine::Token | ChunkLine::QuotedEnd,
+                b' ' | b'\t',
+            ) => ChunkLine::Ws,
+            (ChunkLine::Name | ChunkLine::NameWs, b' ' | b'\t') => ChunkLine::NameWs,
+            (ChunkLine::ExtStart | ChunkLine::ValueStart, b' ' | b'\t') => line,
+            (
+                ChunkLine::Size
+                | ChunkLine::Ws
+                | ChunkLine::Name
+                | ChunkLine::NameWs
+                | ChunkLine::Token
+                | ChunkLine::QuotedEnd,
+                b';',
+            ) => ChunkLine::ExtStart,
+            (ChunkLine::ExtStart | ChunkLine::Name, b) if utils::TOKEN_MAP[b as usize] => {
+                ChunkLine::Name
             }
-            // "Linear white space" is ignored between the chunk size and the
-            // extension separator token (";") due to the "implied *LWS rule".
-            b'\t' | b' ' if !in_ext && !in_chunk_size => {}
-            // LWS can follow the chunk size, but no more digits can come
-            b'\t' | b' ' if in_chunk_size => in_chunk_size = false,
-            // Control characters other than HTAB are not allowed in extensions,
-            // a bare LF could be treated as the line end by other parsers.
-            0x00..=0x08 | 0x0a..=0x1f | 0x7f if in_ext => return Err(InvalidChunkSize),
-            // We allow any other octet once we are in the extension, since
-            // they all get ignored anyway. According to the HTTP spec, valid
-            // extensions would have a more strict syntax:
-            //     (token ["=" (token | quoted-string)])
-            // but we gain nothing by rejecting an otherwise valid chunk size.
-            _ if in_ext => {}
-            // Finally, if we aren't in the extension and we're reading any
-            // other octet, the chunk size line is invalid!
+            (ChunkLine::Name | ChunkLine::NameWs, b'=') => ChunkLine::ValueStart,
+            (ChunkLine::ValueStart | ChunkLine::Token, b) if utils::TOKEN_MAP[b as usize] => {
+                ChunkLine::Token
+            }
+            (ChunkLine::Quoted, b'"') => ChunkLine::QuotedEnd,
+            (ChunkLine::Quoted, b'\\') => ChunkLine::QuotedPair,
+            // the start of a quoted-string, qdtext or the end of a quoted-pair
+            (ChunkLine::ValueStart, b'"')
+            | (ChunkLine::Quoted, b'\t' | b' ' | 0x21 | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff)
+            | (ChunkLine::QuotedPair, b'\t' | b' '..=0x7e | 0x80..=0xff) => ChunkLine::Quoted,
             _ => return Err(InvalidChunkSize),
-        }
+        };
     }
     Ok(Status::Complete((bytes.cursor(), size)))
+}
+
+/// The position in a chunk size line.
+#[derive(Clone, Copy)]
+enum ChunkLine {
+    /// The size digits.
+    Size,
+    /// Whitespace after the size or an extension value, `;` must follow.
+    Ws,
+    /// After `;`, before the extension name.
+    ExtStart,
+    /// The extension name.
+    Name,
+    /// Whitespace after the extension name, `;` or `=` must follow.
+    NameWs,
+    /// After `=`, before the extension value.
+    ValueStart,
+    /// A token extension value.
+    Token,
+    /// A quoted-string extension value.
+    Quoted,
+    /// After a backslash in a quoted-string.
+    QuotedPair,
+    /// After the closing quote of a quoted-string.
+    QuotedEnd,
 }
 
 #[cfg(test)]
@@ -1796,12 +1831,12 @@ mod tests {
             Ok(Status::Complete((7, 198_765)))
         );
         assert_eq!(
-            parse_chunk_size(b"3735AB1;foo bar*\r\n"),
+            parse_chunk_size(b"3735AB1;foo=bar*\r\n"),
             Ok(Status::Complete((18, 57_891_505)))
         );
         assert_eq!(
-            parse_chunk_size(b"3735ab1 ; baz \r\n"),
-            Ok(Status::Complete((16, 57_891_505)))
+            parse_chunk_size(b"3735ab1 ; baz\r\n"),
+            Ok(Status::Complete((15, 57_891_505)))
         );
         assert_eq!(parse_chunk_size(b"77a65\r"), Ok(Status::Partial));
         assert_eq!(parse_chunk_size(b"ab"), Ok(Status::Partial));
@@ -2107,9 +2142,66 @@ mod tests {
             );
         }
         assert_eq!(
-            parse_chunk_size(b"4 ;a=\"b\tc \x80\";d\t\r\n"),
+            parse_chunk_size(b"4 ;a=\"b\tc \x80\" ;d\r\n"),
             Ok(Status::Complete((17, 4)))
         );
+    }
+
+    #[test]
+    fn test_chunk_size_extension_grammar() {
+        for buf in [
+            &b"5;a\r\n"[..],
+            b"5;a;b\r\n",
+            b"5 ; a = b ; c\r\n",
+            b"5\t;\ta\t=\t\"\"\r\n",
+            b"5;a=\"x\\\"y;z\"\r\n",
+            b"5;a=\"\\\x80\"\r\n",
+            b"5;a=!#$%&'*+-.^_`|~09AZaz\r\n",
+            b"5 ;a=\"b\" ;c\r\n",
+        ] {
+            assert_eq!(
+                parse_chunk_size(buf),
+                Ok(Status::Complete((buf.len(), 5))),
+                "{buf:?}"
+            );
+        }
+        for buf in [
+            &b"5;\r\n"[..],
+            b"5; \r\n",
+            b"5;;a\r\n",
+            b"5;a;\r\n",
+            b"5;bad[=x\r\n",
+            b"5;a b\r\n",
+            b"5;a=\r\n",
+            b"5;a==b\r\n",
+            b"5;a=b c\r\n",
+            b"5;a=b=c\r\n",
+            b"5;a=\"b\r\n",
+            b"5;a=\"b\"c\r\n",
+            b"5;a=\"b\" c\r\n",
+            b"5;a=\"\\\x01\"\r\n",
+            b"5;\x80\r\n",
+            b"5;a=\x80\r\n",
+            b"5=a\r\n",
+            b"5 =a\r\n",
+            b"5 a\r\n",
+            // whitespace before the CRLF
+            b"5 \r\n",
+            b"5\t\r\n",
+            b"5;a \r\n",
+            b"5;a=b\t\r\n",
+            b"5;a=\"b\" \r\n",
+        ] {
+            assert_eq!(
+                parse_chunk_size(buf),
+                Err(crate::InvalidChunkSize),
+                "{buf:?}"
+            );
+        }
+        // an incomplete extension is not an error yet
+        for buf in [&b"5;"[..], b"5; a", b"5;a=", b"5;a=\"b\\", b"5;a=\"b\""] {
+            assert_eq!(parse_chunk_size(buf), Ok(Status::Partial), "{buf:?}");
+        }
     }
 
     res! {

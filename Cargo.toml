@@ -1,10 +1,10 @@
 [package]
 name = "ntex-httparse"
-version = "2.4.1"
-authors = ["Nikolay Kim <fafhrd91@gmail.com>", "Sean McArthur <sean@seanmonstar.com>"]
+version = "2.4.2"
+authors = ["Nikolay Kim <fafhrd91@gmail.com>"]
 license = "MIT OR Apache-2.0"
 description = "A tiny, safe, speedy, zero-copy HTTP/1.x parser."
-repository = "https://github.com/fafhrd91/httparse"
+repository = "https://github.com/ntex-rs/ntex-httparse"
 documentation = "https://docs.rs/ntex-httparse"
 readme = "README.md"
 keywords = ["http", "parser", "no_std"]
