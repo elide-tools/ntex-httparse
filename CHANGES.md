@@ -1,5 +1,10 @@
 # Changes
 
+## [2.4.1] - 2026-11-15
+
+* Parse a higher HTTP/1.x minor version, `HTTP/1.2` to `HTTP/1.9`, as HTTP/1.1
+  instead of rejecting it (RFC 9110 section 2.5)
+
 ## [2.4.0] - 2026-11-12
 
 * Add `Request::path_ascii`, set when the request target is pure ASCII, so

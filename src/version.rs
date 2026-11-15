@@ -1,9 +1,11 @@
 use crate::{Error, Result, State, Status, iter::Bytes};
 
 #[inline]
-/// Parse an HTTP version, `HTTP/1.0` or `HTTP/1.1`.
+/// Parse an HTTP/1.x version.
 ///
-/// Returns `0` for HTTP/1.0 and `1` for HTTP/1.1.
+/// Returns `0` for HTTP/1.0 and `1` for HTTP/1.1. A higher minor version,
+/// `HTTP/1.2` to `HTTP/1.9`, is reported as HTTP/1.1, the highest supported
+/// minor version (RFC 9110 section 2.5).
 pub fn parse_version(src: &[u8]) -> Result<u8> {
     let mut st = State::default();
     let mut bytes = Bytes::new(src, &mut st);
@@ -21,6 +23,7 @@ pub(crate) fn parse_version_inner(bytes: &mut Bytes<'_, '_>) -> Result<u8> {
         return match u64::from_ne_bytes(eight) {
             H10 => Ok(Status::Complete(0)),
             H11 => Ok(Status::Complete(1)),
+            _ if eight[..7] == *b"HTTP/1." && eight[7].is_ascii_digit() => Ok(Status::Complete(1)),
             _ => Err(Error::Version),
         };
     }

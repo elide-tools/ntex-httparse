@@ -267,7 +267,7 @@ pub struct Request {
     /// Position of the first `?` in the request target, an index into the
     /// parsed buffer like `path`, `None` if the target has no query.
     pub query: Option<usize>,
-    /// HTTP version, `0` for HTTP/1.0 and `1` for HTTP/1.1.
+    /// HTTP version, `0` for HTTP/1.0 and `1` for HTTP/1.1 or a higher minor version.
     pub version: u8,
 }
 
@@ -363,7 +363,7 @@ impl Request {
 /// ```
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct Response {
-    /// HTTP version, `0` for HTTP/1.0 and `1` for HTTP/1.1.
+    /// HTTP version, `0` for HTTP/1.0 and `1` for HTTP/1.1 or a higher minor version.
     pub version: u8,
     /// Status code, three digits.
     pub code: u16,
@@ -1233,6 +1233,46 @@ mod tests {
         test_request_with_invalid_token_delimiter,
         b"GET\n/ HTTP/1.1\r\nHost: foo.bar\r\n\r\n",
         Err(Error::Token)
+    }
+
+    /// STATEMENT: Requests and responses with a higher HTTP/1.x minor version are
+    /// parsed as HTTP/1.1.
+    ///
+    /// HOW:
+    /// - Parse `HTTP/1.2` and `HTTP/1.9` request lines and status lines.
+    /// - Check that each completes at the end of the line and reports version `1`.
+    #[test]
+    fn test_higher_minor_version() {
+        for (line, ver) in [(&b"GET / HTTP/1.2\r\n"[..], 1), (b"GET / HTTP/1.9\r\n", 1)] {
+            let mut req = Request::default();
+            assert_eq!(req.parse(line), Ok(Status::Complete(line.len())));
+            assert_eq!(req.version, ver);
+        }
+        for line in [&b"HTTP/1.2 200 OK\r\n"[..], b"HTTP/1.9 200 OK\r\n"] {
+            let mut res = Response::default();
+            assert_eq!(res.parse(line), Ok(Status::Complete(line.len())));
+            assert_eq!(res.version, 1);
+            assert_eq!(res.code, 200);
+        }
+    }
+
+    /// STATEMENT: Versions that are not `HTTP/1.` followed by a single digit are rejected.
+    ///
+    /// HOW:
+    /// - Parse request lines with a non-digit, two-digit, and leading zero minor version,
+    ///   and with major versions 0 and 2.
+    /// - Check that each fails to parse.
+    #[test]
+    fn test_request_with_invalid_minor_version() {
+        for line in [
+            &b"GET / HTTP/1.a\r\n"[..],
+            b"GET / HTTP/1.10\r\n",
+            b"GET / HTTP/1.01\r\n",
+            b"GET / HTTP/0.9\r\n",
+            b"GET / HTTP/2.0\r\n",
+        ] {
+            assert!(Request::default().parse(line).is_err(), "{line:?}");
+        }
     }
 
     req_err! {
